@@ -1,11 +1,16 @@
 mod commands;
+mod error;
 
 use poise::serenity_prelude as serenity;
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
+type CommandResult<E = Error> = Result<(), E>;
+
 // User data, which is stored and accessible in all command invocations
-pub struct Data {}
+pub struct Data {
+    pub reqwest: reqwest::Client,
+}
 
 /// Show this help menu
 #[poise::command(prefix_command, track_edits, slash_command)]
@@ -14,7 +19,7 @@ async fn help(
     #[description = "Specific command to show help about"]
     #[autocomplete = "poise::builtins::autocomplete_command"]
     command: Option<String>,
-) -> Result<(), Error> {
+) -> CommandResult {
     poise::builtins::help(
         ctx,
         command.as_deref(),
@@ -30,7 +35,7 @@ VieriBot-rs",
 }
 
 #[poise::command(prefix_command)]
-async fn register(ctx: Context<'_>) -> Result<(), Error> {
+async fn register(ctx: Context<'_>) -> CommandResult {
     println!(
         "{} registered slash commands in {}",
         ctx.author().name,
@@ -46,6 +51,12 @@ async fn on_error(error: poise::FrameworkError<'_, Data, Error>) {
         poise::FrameworkError::Setup { error, .. } => panic!("Failed to start bot: {:?}", error),
         poise::FrameworkError::Command { error, ctx } => {
             println!("Error in command `{}`: {:?}", ctx.command().name, error);
+            error::send_err_msg(
+                ctx,
+                format!("Internal error while processing {}", ctx.command().name),
+                error.to_string(),
+            )
+            .await;
         }
         error => {
             if let Err(e) = poise::builtins::on_error(error).await {
@@ -57,6 +68,10 @@ async fn on_error(error: poise::FrameworkError<'_, Data, Error>) {
 
 #[tokio::main]
 async fn main() {
+    let data = Data {
+        reqwest: reqwest::Client::new(),
+    };
+
     poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands: vec![
@@ -84,7 +99,7 @@ async fn main() {
                 ready.user.name,
                 ready.guilds.len()
             );
-            Box::pin(async move { Ok(Data {}) })
+            Box::pin(async { Ok(data) })
         })
         .run()
         .await
