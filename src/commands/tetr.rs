@@ -2,6 +2,17 @@ use crate::{CommandResult, Context, Error};
 use serde_derive::Deserialize;
 use serde_json::Value;
 
+#[derive(Debug)]
+struct Monitor {
+    channel_id: String,
+    user_id: String,
+    username: String,
+    last_match_id: Option<String>,
+    game_time: f64,
+    last_personal_best_blitz: Option<i32>,
+    last_personal_best_40l: Option<i32>,
+}
+
 #[allow(dead_code)]
 #[derive(Deserialize)]
 struct UserResponse {
@@ -79,7 +90,21 @@ pub async fn tetr(ctx: Context<'_>) -> CommandResult {
 /// List tetr.io monitored users
 #[poise::command(prefix_command, slash_command, guild_cooldown = 5)]
 pub async fn list(ctx: Context<'_>) -> CommandResult {
-    ctx.say("No monitored users").await?;
+    let recs = sqlx::query_as!(
+        Monitor,
+        r#"
+    SELECT * FROM monitor WHERE channel_id = $1"#,
+        ctx.channel_id().to_string()
+    )
+    .map(|m| m.username)
+    .fetch_all(&ctx.data().db_pool)
+    .await?;
+
+    if recs.len() == 0 {
+        ctx.say("No monitored users").await?;
+    } else {
+        ctx.say(recs.join("\n")).await?;
+    }
     Ok(())
 }
 
@@ -90,6 +115,24 @@ pub async fn monitor(
     #[description = "Tetr username to monitor"] user: String,
 ) -> CommandResult {
     let user_data = get_user(ctx, &user).await?;
+
+    let res = sqlx::query!(
+        r#"
+    INSERT INTO monitor (channel_id, user_id, username, game_time)
+    VALUES ($1, $2, $3, $4)"#,
+        ctx.channel_id().to_string(),
+        user_data._id,
+        user,
+        0_f64
+    )
+    .execute(&ctx.data().db_pool)
+    .await?
+    .rows_affected();
+
+    if res != 1 {
+        return Err("Failed to add user".into());
+    }
+
     ctx.send(|b| {
         b.embed(|b| {
             b.title(format!("Saved {}", user))

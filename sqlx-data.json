@@ -1,0 +1,74 @@
+{
+  "db": "PostgreSQL",
+  "13ce81c49270c2a1e391813494e66df38f08d4b2bcb2112e0a502f301a936ddd": {
+    "describe": {
+      "columns": [
+        {
+          "name": "channel_id",
+          "ordinal": 0,
+          "type_info": "Text"
+        },
+        {
+          "name": "user_id",
+          "ordinal": 1,
+          "type_info": "Bpchar"
+        },
+        {
+          "name": "username",
+          "ordinal": 2,
+          "type_info": "Text"
+        },
+        {
+          "name": "last_match_id",
+          "ordinal": 3,
+          "type_info": "Bpchar"
+        },
+        {
+          "name": "game_time",
+          "ordinal": 4,
+          "type_info": "Float8"
+        },
+        {
+          "name": "last_personal_best_blitz",
+          "ordinal": 5,
+          "type_info": "Int4"
+        },
+        {
+          "name": "last_personal_best_40l",
+          "ordinal": 6,
+          "type_info": "Int4"
+        }
+      ],
+      "nullable": [
+        false,
+        false,
+        false,
+        true,
+        false,
+        true,
+        true
+      ],
+      "parameters": {
+        "Left": [
+          "Text"
+        ]
+      }
+    },
+    "query": "\n    SELECT * FROM monitor WHERE channel_id = $1"
+  },
+  "912db53a46f5d3dd289a0263d3fb263284e3b14101de663d36e7befdb9a3f3e0": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Left": [
+          "Text",
+          "Bpchar",
+          "Text",
+          "Float8"
+        ]
+      }
+    },
+    "query": "\n    INSERT INTO monitor (channel_id, user_id, username, game_time)\n    VALUES ($1, $2, $3, $4)"
+  }
+}

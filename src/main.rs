@@ -2,14 +2,17 @@ mod commands;
 mod error;
 
 use poise::serenity_prelude as serenity;
+use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
 type CommandResult<E = Error> = Result<(), E>;
+type DbPool = Pool<Postgres>;
 
 // User data, which is stored and accessible in all command invocations
 pub struct Data {
     pub reqwest: reqwest::Client,
+    pub db_pool: DbPool,
 }
 
 /// Show this help menu
@@ -66,10 +69,25 @@ async fn on_error(error: poise::FrameworkError<'_, Data, Error>) {
     }
 }
 
+async fn init_db() -> DbPool {
+    let pool = match PgPoolOptions::new()
+        .max_connections(4)
+        .connect(&std::env::var("DATABASE_URL").expect("missing DATABASE_URL"))
+        .await
+    {
+        Ok(pool) => pool,
+        Err(why) => {
+            panic!("Cannot connect to db: {:?}", why)
+        }
+    };
+    pool
+}
+
 #[tokio::main]
 async fn main() {
     let data = Data {
         reqwest: reqwest::Client::new(),
+        db_pool: init_db().await,
     };
 
     poise::Framework::builder()
@@ -79,6 +97,8 @@ async fn main() {
                 register(),
                 commands::admin::shutdown(),
                 commands::admin::spam(),
+                commands::admin::ping(),
+                commands::admin::dblatency(),
                 commands::tetr::tetr(),
             ],
             prefix_options: poise::PrefixFrameworkOptions {
@@ -93,13 +113,24 @@ async fn main() {
         .intents(
             serenity::GatewayIntents::non_privileged() | serenity::GatewayIntents::MESSAGE_CONTENT,
         )
-        .user_data_setup(move |_ctx, ready, _framework| {
+        .user_data_setup(move |ctx, ready, framework| {
             println!(
                 "Ready {}, connected to ({}) guilds",
                 ready.user.name,
                 ready.guilds.len()
             );
-            Box::pin(async { Ok(data) })
+            Box::pin(async {
+                serenity::Command::set_global_application_commands(&ctx.http, |c| {
+                    *c =
+                        poise::builtins::create_application_commands(&framework.options().commands);
+                    println!("I now have the following guild slash commands: \n{c:#?}");
+                    c
+                })
+                .await
+                .expect("Cannot set global application commands");
+                println!("Done setting slash commands");
+                Ok(data)
+            })
         })
         .run()
         .await
