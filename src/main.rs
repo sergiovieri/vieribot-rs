@@ -56,7 +56,7 @@ async fn on_error(error: poise::FrameworkError<'_, Data, Error>) {
             println!("Error in command `{}`: {:?}", ctx.command().name, error);
             error::send_err_msg(
                 ctx,
-                format!("Internal error while processing {}", ctx.command().name),
+                format!("Error while processing `{}`", ctx.command().name),
                 error.to_string(),
             )
             .await;

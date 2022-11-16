@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS monitor (
   username text NOT NULL,
   last_match_id char(24),
   game_time double precision NOT NULL,
+  games_played integer NOT NULL,
   last_personal_best_blitz integer,
   last_personal_best_40l integer,
   PRIMARY KEY(channel_id, user_id)

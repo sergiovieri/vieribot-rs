@@ -1,79 +1,9 @@
-use crate::{CommandResult, Context, Error};
-use serde_derive::Deserialize;
-use serde_json::Value;
+use crate::{CommandResult, Context};
 
-#[derive(Debug)]
-struct Monitor {
-    channel_id: String,
-    user_id: String,
-    username: String,
-    last_match_id: Option<String>,
-    game_time: f64,
-    last_personal_best_blitz: Option<i32>,
-    last_personal_best_40l: Option<i32>,
-}
+use db::Monitor;
 
-#[allow(dead_code)]
-#[derive(Deserialize)]
-struct UserResponse {
-    success: bool,
-    error: Option<String>,
-    cache: Option<Value>,
-    data: Option<UserResponseData>,
-}
-
-#[derive(Deserialize)]
-struct UserResponseData {
-    user: User,
-}
-
-#[allow(dead_code)]
-#[derive(Deserialize)]
-struct User {
-    _id: String,
-    username: String,
-    role: String,
-}
-
-static TETR_API_BASE_URL: &'static str = "https://ch.tetr.io/api/";
-
-async fn get_user(ctx: Context<'_>, user: &str) -> Result<User, Error> {
-    let reqwest = &ctx.data().reqwest;
-    let response = reqwest
-        .get(reqwest::Url::parse(TETR_API_BASE_URL)?.join(&format!("users/{}", user))?)
-        .send()
-        .await
-        .map_err(|e| {
-            println!("{:?}", e);
-            "Tetr.io api cannot be reached"
-        })?
-        .error_for_status()
-        .map_err(|e| {
-            println!("{:?}", e);
-            format!("Tetr.io api call failed: {}", e.to_string())
-        })?
-        .json::<UserResponse>()
-        .await
-        .map_err(|e| {
-            println!("{:?}", e);
-            "Failed to parse tetr.io data"
-        })?;
-    if !response.success {
-        println!(
-            "Tetr.io api unsuccessful for {}: {:?}",
-            user, response.error
-        );
-        Err(response.error.unwrap_or("Tetr.io api unsuccessful".into()))?
-    }
-    response
-        .data
-        .map(|r| Ok(r.user))
-        .unwrap_or(Err("User field not found".into()))
-}
-
-fn get_user_avatar_url(user: &User) -> String {
-    format!("https://tetr.io/user-content/avatars/{}.jpg", user._id)
-}
+mod client;
+mod db;
 
 /// Tetr.io tracking
 #[poise::command(
@@ -90,20 +20,21 @@ pub async fn tetr(ctx: Context<'_>) -> CommandResult {
 /// List tetr.io monitored users
 #[poise::command(prefix_command, slash_command, guild_cooldown = 5)]
 pub async fn list(ctx: Context<'_>) -> CommandResult {
-    let recs = sqlx::query_as!(
-        Monitor,
-        r#"
-    SELECT * FROM monitor WHERE channel_id = $1"#,
-        ctx.channel_id().to_string()
-    )
-    .map(|m| m.username)
-    .fetch_all(&ctx.data().db_pool)
-    .await?;
+    let monitors = db::get_monitors_for_channel(&ctx.data().db_pool, ctx.channel_id().to_string())
+        .await
+        .map_err(|e| format!("Failed to add user: {e:?}"))?;
 
-    if recs.len() == 0 {
+    if monitors.len() == 0 {
         ctx.say("No monitored users").await?;
     } else {
-        ctx.say(recs.join("\n")).await?;
+        ctx.say(
+            monitors
+                .iter()
+                .map(|m| m.username.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .await?;
     }
     Ok(())
 }
@@ -112,35 +43,45 @@ pub async fn list(ctx: Context<'_>) -> CommandResult {
 #[poise::command(prefix_command, slash_command, guild_cooldown = 5)]
 pub async fn monitor(
     ctx: Context<'_>,
-    #[description = "Tetr username to monitor"] user: String,
+    #[description = "Tetr username/id to monitor"] user: String,
 ) -> CommandResult {
-    let user_data = get_user(ctx, &user).await?;
+    let user_data = client::get_user(ctx, &user).await?;
 
-    let res = sqlx::query!(
-        r#"
-    INSERT INTO monitor (channel_id, user_id, username, game_time)
-    VALUES ($1, $2, $3, $4)"#,
-        ctx.channel_id().to_string(),
-        user_data._id,
-        user,
-        0_f64
-    )
-    .execute(&ctx.data().db_pool)
-    .await?
-    .rows_affected();
+    // Create new monitor
+    let m = Monitor {
+        channel_id: ctx.channel_id().to_string(),
+        user_id: user_data._id.clone(),
+        username: user_data.username.clone(),
+        game_time: user_data.gametime,
+        games_played: user_data.gamesplayed,
+        last_match_id: None,
+        last_personal_best_40l: None,
+        last_personal_best_blitz: None,
+    };
 
-    if res != 1 {
-        return Err("Failed to add user".into());
-    }
-
-    ctx.send(|b| {
-        b.embed(|b| {
-            b.title(format!("Saved {}", user))
-                .description(&user_data._id)
-                .thumbnail(get_user_avatar_url(&user_data))
-        })
-    })
-    .await?;
+    match db::insert_monitor(&ctx.data().db_pool, &m).await? {
+        db::InsertResult::Duplicate => {
+            ctx.send(|b| {
+                b.embed(|b| {
+                    b.title(format!("{} was already added", user_data.username))
+                        .description(&user_data._id)
+                        .color((255, 0, 0))
+                        .thumbnail(client::get_user_avatar_url(&user_data))
+                })
+            })
+            .await?
+        }
+        db::InsertResult::Success => {
+            ctx.send(|b| {
+                b.embed(|b| {
+                    b.title(format!("Saved {}", user_data.username))
+                        .description(&user_data._id)
+                        .thumbnail(client::get_user_avatar_url(&user_data))
+                })
+            })
+            .await?
+        }
+    };
     Ok(())
 }
 
