@@ -1,4 +1,5 @@
 use crate::{CommandResult, Context};
+use anyhow::Context as anyhowContext;
 
 use db::Monitor;
 
@@ -9,7 +10,7 @@ mod db;
 #[poise::command(
     prefix_command,
     slash_command,
-    subcommands("list", "monitor", "test"),
+    subcommands("list", "monitor", "test", "remove"),
     guild_cooldown = 5
 )]
 pub async fn tetr(ctx: Context<'_>) -> CommandResult {
@@ -22,7 +23,7 @@ pub async fn tetr(ctx: Context<'_>) -> CommandResult {
 pub async fn list(ctx: Context<'_>) -> CommandResult {
     let monitors = db::get_monitors_for_channel(&ctx.data().db_pool, ctx.channel_id().to_string())
         .await
-        .map_err(|e| format!("Failed to add user: {e:?}"))?;
+        .context("failed to add user")?;
 
     if monitors.len() == 0 {
         ctx.say("No monitored users").await?;
@@ -59,29 +60,53 @@ pub async fn monitor(
         last_personal_best_blitz: None,
     };
 
-    match db::insert_monitor(&ctx.data().db_pool, &m).await? {
-        db::InsertResult::Duplicate => {
-            ctx.send(|b| {
-                b.embed(|b| {
-                    b.title(format!("{} was already added", user_data.username))
-                        .description(&user_data._id)
-                        .color((255, 0, 0))
-                        .thumbnail(client::get_user_avatar_url(&user_data))
-                })
-            })
-            .await?
-        }
-        db::InsertResult::Success => {
+    match db::insert_monitor(&ctx.data().db_pool, &m).await {
+        Ok(_) => {
             ctx.send(|b| {
                 b.embed(|b| {
                     b.title(format!("Saved {}", user_data.username))
                         .description(&user_data._id)
-                        .thumbnail(client::get_user_avatar_url(&user_data))
+                        .thumbnail(client::get_user_avatar_url(&user_data._id))
                 })
             })
-            .await?
+            .await?;
         }
+        Err(e) => match e {
+            db::DbError::Duplicate(_) => {
+                ctx.send(|b| {
+                    b.embed(|b| {
+                        b.title(format!("{} was already added", user_data.username))
+                            .description(&user_data._id)
+                            .color((255, 0, 0))
+                            .thumbnail(client::get_user_avatar_url(&user_data._id))
+                    })
+                })
+                .await?;
+            }
+            db::DbError::Internal(_) => {
+                Err(e).context("failed to insert monitor into DB")?;
+            }
+        },
     };
+    Ok(())
+}
+
+/// Remove a tetr.io user from the monitor list
+#[poise::command(prefix_command, slash_command, guild_cooldown = 5)]
+pub async fn remove(
+    ctx: Context<'_>,
+    #[description = "Tetr username to remove"] user: String,
+) -> CommandResult {
+    let m = db::delete_monitor(&ctx.data().db_pool, &ctx.channel_id().to_string(), &user).await?;
+    ctx.send(|b| {
+        b.embed(|b| {
+            b.title(format!("{} removed from the list", user))
+                .description(&m.user_id)
+                .thumbnail(client::get_user_avatar_url(&m.user_id))
+                .footer(|b| b.text("By Vieri Corp.™ All Rights Reserved"))
+        })
+    })
+    .await?;
     Ok(())
 }
 

@@ -1,4 +1,5 @@
 use crate::{Context, Error};
+use anyhow::Context as anyhowContext;
 use serde_derive::Deserialize;
 use serde_json::Value;
 
@@ -55,34 +56,25 @@ pub async fn get_user(ctx: Context<'_>, user: &str) -> Result<TetrUser, Error> {
         .get(reqwest::Url::parse(TETR_API_BASE_URL)?.join(&format!("users/{}", user))?)
         .send()
         .await
-        .map_err(|e| {
-            println!("{:?}", e);
-            "Tetr.io api cannot be reached"
-        })?
+        .context("error sending request to tetr.io")?
         .error_for_status()
-        .map_err(|e| {
-            println!("{:?}", e);
-            format!("Tetr.io api call failed: {}", e.to_string())
-        })?
+        .context("tetr.io api call failed")?
         .json::<UserResponse>()
         .await
-        .map_err(|e| {
-            println!("{:?}", e);
-            "Failed to parse tetr.io data"
-        })?;
+        .context("failed to parse tetr.io data")?;
     if !response.success {
-        println!(
-            "Tetr.io api unsuccessful for {}: {:?}",
-            user, response.error
-        );
-        Err(response.error.unwrap_or("Tetr.io api unsuccessful".into()))?
+        Err(anyhow::anyhow!(
+            "tetr.io API unsuccessful for `{}`:\n{}",
+            user,
+            response.error.unwrap_or("unknown".into())
+        ))?;
     }
     response
         .data
         .map(|r| Ok(r.user))
-        .unwrap_or(Err("User field not found".into()))
+        .unwrap_or(Err(anyhow::anyhow!("User field not found for `{}`", user)))
 }
 
-pub fn get_user_avatar_url(user: &TetrUser) -> String {
-    format!("https://tetr.io/user-content/avatars/{}.jpg", user._id)
+pub fn get_user_avatar_url(user_id: &str) -> String {
+    format!("https://tetr.io/user-content/avatars/{}.jpg", user_id)
 }

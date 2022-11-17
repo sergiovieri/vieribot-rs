@@ -1,4 +1,5 @@
 use crate::{DbPool, Error};
+use anyhow::Context;
 
 #[derive(Debug)]
 pub struct Monitor {
@@ -26,12 +27,15 @@ SELECT * FROM monitor WHERE channel_id = $1"#,
     .await?)
 }
 
-pub enum InsertResult {
-    Success,
-    Duplicate,
+#[derive(thiserror::Error, Debug)]
+pub enum DbError {
+    #[error("{0}")]
+    Duplicate(String),
+    #[error(transparent)]
+    Internal(#[from] anyhow::Error),
 }
 
-pub async fn insert_monitor(pool: &DbPool, monitor: &Monitor) -> Result<InsertResult, Error> {
+pub async fn insert_monitor(pool: &DbPool, monitor: &Monitor) -> Result<(), DbError> {
     let res = sqlx::query!(
         r#"
 INSERT INTO monitor (channel_id, user_id, username, last_match_id, game_time, games_played,
@@ -52,22 +56,42 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#,
     match res {
         Ok(res) => {
             if res.rows_affected() != 1 {
-                println!(
-                    "Failed to insert monitor, rows affected: {:?}",
+                return Err(anyhow::anyhow!(
+                    "failed to insert monitor, rows affected: {}",
                     res.rows_affected()
-                );
-                Err("Failed to insert".into())
-            } else {
-                Ok(InsertResult::Success)
+                )
+                .into());
             }
         }
         Err(e) => {
             if let Some(code) = e.as_database_error().and_then(|de| de.code()) {
                 if code == "23505" {
-                    return Ok(InsertResult::Duplicate);
+                    Err(DbError::Duplicate(
+                        "duplicate error while inserting monitor".into(),
+                    ))?
                 }
             }
-            Err(e.into())
+            Err(e).context("failed to insert monitor")?;
         }
-    }
+    };
+    Ok(())
+}
+
+pub async fn delete_monitor(
+    pool: &DbPool,
+    channel_id: &str,
+    username: &str,
+) -> Result<Monitor, DbError> {
+    Ok(sqlx::query_as!(
+        Monitor,
+        r#"
+DELETE FROM monitor
+WHERE channel_id = $1 AND username = $2
+RETURNING *"#,
+        channel_id,
+        username
+    )
+    .fetch_one(pool)
+    .await
+    .context("failed to delete monitor")?)
 }

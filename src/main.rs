@@ -4,7 +4,7 @@ mod error;
 use poise::serenity_prelude as serenity;
 use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
 
-type Error = Box<dyn std::error::Error + Send + Sync>;
+type Error = anyhow::Error;
 type Context<'a> = poise::Context<'a, Data, Error>;
 type CommandResult<E = Error> = Result<(), E>;
 type DbPool = Pool<Postgres>;
