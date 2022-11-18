@@ -70,7 +70,7 @@ async fn on_error(error: poise::FrameworkError<'_, Data, Error>) {
 }
 
 async fn init_db() -> DbPool {
-    let pool = match PgPoolOptions::new()
+    match PgPoolOptions::new()
         .max_connections(4)
         .connect(&std::env::var("DATABASE_URL").expect("missing DATABASE_URL"))
         .await
@@ -79,8 +79,7 @@ async fn init_db() -> DbPool {
         Err(why) => {
             panic!("Cannot connect to db: {:?}", why)
         }
-    };
-    pool
+    }
 }
 
 #[tokio::main]

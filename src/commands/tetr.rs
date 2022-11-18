@@ -14,7 +14,7 @@ fn format_tetr_user<'a>(user: &client::TetrUser, b: &'a mut CreateEmbed) -> &'a 
     let join_time = user
         .ts
         .as_ref()
-        .and_then(|t| chrono::DateTime::parse_from_rfc3339(&t).ok())
+        .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
         .map(|t| chrono::Utc::now() - t.with_timezone(&chrono::Utc))
         .and_then(|d| d.to_std().ok());
     if let Some(d) = join_time {
@@ -34,7 +34,7 @@ fn format_tetr_user<'a>(user: &client::TetrUser, b: &'a mut CreateEmbed) -> &'a 
 #[poise::command(
     prefix_command,
     slash_command,
-    subcommands("list", "monitor", "test", "remove"),
+    subcommands("list", "monitor", "test", "remove", "record"),
     guild_cooldown = 5
 )]
 pub async fn tetr(ctx: Context<'_>) -> CommandResult {
@@ -49,7 +49,7 @@ pub async fn list(ctx: Context<'_>) -> CommandResult {
         .await
         .context("failed to add user")?;
 
-    if monitors.len() == 0 {
+    if monitors.is_empty() {
         ctx.say("No monitored users").await?;
     } else {
         ctx.say(
@@ -70,7 +70,7 @@ pub async fn monitor(
     ctx: Context<'_>,
     #[description = "Tetr username/id to monitor"] user: String,
 ) -> CommandResult {
-    let user_data = client::get_user(ctx, &user).await?;
+    let user_data = client::get_user(&ctx, &user).await?;
 
     // Create new monitor
     let m = Monitor {
@@ -91,7 +91,7 @@ pub async fn monitor(
                     b.title(format!(
                         "Saved {} {}",
                         &user_data.username,
-                        code_to_flag(&user_data.country.as_deref().unwrap_or_default())
+                        code_to_flag(user_data.country.as_deref().unwrap_or_default())
                             .unwrap_or_default()
                     ));
                     format_tetr_user(&user_data, b)
@@ -149,5 +149,15 @@ pub async fn test(ctx: Context<'_>, #[description = "int test"] id: i32) -> Comm
         })
     })
     .await?;
+    Ok(())
+}
+
+#[poise::command(prefix_command, slash_command, guild_cooldown = 5)]
+pub async fn record(
+    ctx: Context<'_>,
+    #[description = "Tetr username to get record"] user: String,
+) -> CommandResult {
+    let record = client::get_user_record(&ctx, &user).await?;
+    println!("{:#?}", record);
     Ok(())
 }
