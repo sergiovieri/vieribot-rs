@@ -19,3 +19,7 @@ sqlx = { version = "0.6", features = [
 ] }
 thiserror = "1.0"
 anyhow = "1.0"
+country-emoji = "0.2.0"
+pretty-duration = "0.1.1"
+timeago = "0.3.1"
+chrono = "0.4.23"

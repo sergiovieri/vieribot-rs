@@ -1,10 +1,34 @@
 use crate::{CommandResult, Context};
-use anyhow::Context as anyhowContext;
-
 use db::Monitor;
+
+use anyhow::Context as anyhowContext;
+use country_emoji::code_to_flag;
+use poise::serenity_prelude::CreateEmbed;
+use pretty_duration::pretty_duration;
+use std::time::Duration;
 
 mod client;
 mod db;
+
+fn format_tetr_user<'a>(user: &client::TetrUser, b: &'a mut CreateEmbed) -> &'a mut CreateEmbed {
+    let join_time = user
+        .ts
+        .as_ref()
+        .and_then(|t| chrono::DateTime::parse_from_rfc3339(&t).ok())
+        .map(|t| chrono::Utc::now() - t.with_timezone(&chrono::Utc))
+        .and_then(|d| d.to_std().ok());
+    if let Some(d) = join_time {
+        b.description(format!("Joined {}", timeago::Formatter::new().convert(d)));
+    }
+    b.field(
+        "Play time",
+        pretty_duration(&Duration::from_secs(user.gametime as u64), None),
+        true,
+    )
+    .field("Online games", user.gamesplayed, true)
+    .field("Games won", user.gameswon, true)
+    .thumbnail(client::get_user_avatar_url(&user._id))
+}
 
 /// Tetr.io tracking
 #[poise::command(
@@ -64,9 +88,13 @@ pub async fn monitor(
         Ok(_) => {
             ctx.send(|b| {
                 b.embed(|b| {
-                    b.title(format!("Saved {}", user_data.username))
-                        .description(&user_data._id)
-                        .thumbnail(client::get_user_avatar_url(&user_data._id))
+                    b.title(format!(
+                        "Saved {} {}",
+                        &user_data.username,
+                        code_to_flag(&user_data.country.as_deref().unwrap_or_default())
+                            .unwrap_or_default()
+                    ));
+                    format_tetr_user(&user_data, b)
                 })
             })
             .await?;

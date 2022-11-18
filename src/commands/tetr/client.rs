@@ -23,11 +23,15 @@ pub struct TetrUser {
     pub _id: String,
     pub username: String,
     pub role: String,
+    pub ts: Option<String>,
+    pub xp: f64,
     pub gamesplayed: i32,
+    pub gameswon: i32,
     pub gametime: f64,
     pub country: Option<String>,
     pub league: TetraLeagueStanding,
     pub connections: TetrUserConnections,
+    pub friend_count: i32,
 }
 
 #[derive(Deserialize)]
