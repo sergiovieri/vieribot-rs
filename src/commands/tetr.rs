@@ -1,5 +1,6 @@
-use crate::{CommandResult, Context};
+use crate::{CommandResult, Context, Error};
 use db::Monitor;
+use futures::{stream, StreamExt};
 
 use anyhow::Context as anyhowContext;
 use country_emoji::code_to_flag;
@@ -9,6 +10,8 @@ use std::time::Duration;
 
 mod client;
 mod db;
+
+const MAX_CONCURRENT_REQUESTS: usize = 64;
 
 fn format_tetr_user<'a>(user: &client::TetrUser, b: &'a mut CreateEmbed) -> &'a mut CreateEmbed {
     let join_time = user
@@ -34,7 +37,7 @@ fn format_tetr_user<'a>(user: &client::TetrUser, b: &'a mut CreateEmbed) -> &'a 
 #[poise::command(
     prefix_command,
     slash_command,
-    subcommands("list", "monitor", "test", "remove", "record"),
+    subcommands("list", "monitor", "test", "remove", "record", "refresh", "monitor2"),
     guild_cooldown = 5
 )]
 pub async fn tetr(ctx: Context<'_>) -> CommandResult {
@@ -61,6 +64,86 @@ pub async fn list(ctx: Context<'_>) -> CommandResult {
         )
         .await?;
     }
+    Ok(())
+}
+
+async fn fetch_new_monitor(ctx: &Context<'_>, user: String) -> Result<Monitor, Error> {
+    let user_data = client::get_user(ctx, &user).await?;
+    let m = Monitor {
+        channel_id: ctx.channel_id().to_string(),
+        user_id: user_data._id.clone(),
+        username: user_data.username.clone(),
+        game_time: user_data.gametime,
+        games_played: user_data.gamesplayed,
+        last_match_id: None,
+        last_personal_best_40l: None,
+        last_personal_best_blitz: None,
+    };
+    Ok(m)
+}
+
+/// Monitor tetr.io users
+#[poise::command(prefix_command, slash_command, owners_only, guild_cooldown = 5)]
+pub async fn monitor2(
+    ctx: Context<'_>,
+    #[description = "Tetr usernames/ids to monitor"] users: Vec<String>,
+) -> CommandResult {
+    let reply_handle = ctx.say("Fetching users from tetr.io").await?;
+    let start = std::time::Instant::now();
+    let monitors = stream::iter(users)
+        .map(|u| async { (fetch_new_monitor(&ctx, u.clone()).await, u) })
+        .buffer_unordered(MAX_CONCURRENT_REQUESTS)
+        .collect::<Vec<_>>()
+        .await;
+    dbg!(start.elapsed());
+    let mut failed_users = vec![];
+    let mut fetched_users = vec![];
+    for (m, u) in monitors.iter() {
+        match m {
+            Ok(m) => fetched_users.push(m),
+            Err(why) => {
+                println!("error fetching user {}: {:?}", u, why);
+                failed_users.push(u.clone());
+            }
+        }
+    }
+
+    let mut num_inserted = 0;
+    let mut num_duplicate = 0;
+    for m in fetched_users {
+        match db::insert_monitor(&ctx.data().db_pool, m).await {
+            Ok(_) => {
+                num_inserted += 1;
+            }
+            Err(e) => match e {
+                db::DbError::Duplicate(_) => {
+                    num_duplicate += 1;
+                }
+                db::DbError::Internal(_) => {
+                    println!("failed to insert monitor to db {:?}", e);
+                    failed_users.push(m.username.clone())
+                }
+            },
+        }
+    }
+    dbg!(start.elapsed());
+
+    reply_handle
+        .edit(ctx, |b| {
+            b.embed(|b| {
+                b.title(format!("Monitored {} new users", num_inserted));
+                if !failed_users.is_empty() {
+                    b.field("Failed users", failed_users.join("\n"), true);
+                }
+                if num_duplicate != 0 {
+                    b.field("Duplicate users", num_duplicate, true);
+                }
+                b
+            })
+        })
+        .await
+        .context("failed to edit reply")?;
+
     Ok(())
 }
 
@@ -159,5 +242,66 @@ pub async fn record(
 ) -> CommandResult {
     let record = client::get_user_record(&ctx, &user).await?;
     println!("{:#?}", record);
+    Ok(())
+}
+
+async fn refresh_single(ctx: &Context<'_>, m: &Monitor) -> Result<(), Error> {
+    let record = client::get_user_record(ctx, &m.user_id)
+        .await
+        .context("failed to get user record")?;
+    println!("{:#?}", record);
+    Ok(())
+}
+
+#[poise::command(prefix_command, slash_command, guild_cooldown = 5)]
+pub async fn refresh(ctx: Context<'_>) -> CommandResult {
+    let reply_handle = ctx.say("Refreshing").await?;
+    let start = std::time::Instant::now();
+    let monitors = db::get_monitors_for_channel(&ctx.data().db_pool, ctx.channel_id().to_string())
+        .await
+        .context("failed to get monitored users from db")?;
+    let results = stream::iter(monitors)
+        .map(|m| async { (refresh_single(&ctx, &m).await, m) })
+        .buffer_unordered(MAX_CONCURRENT_REQUESTS)
+        .collect::<Vec<_>>()
+        .await;
+    let mut num_errors = 0;
+    for (result, m) in results.iter() {
+        if let Err(why) = result {
+            println!(
+                "error during refresh for {} {}: {:?}",
+                m.channel_id, m.user_id, why
+            );
+            num_errors += 1;
+        }
+    }
+
+    let latency = start.elapsed();
+    let title: &str;
+    let description: String;
+    if num_errors > 0 {
+        title = "Refresh finished with errors";
+        description = format!(
+            "Refreshed {:?}/{:?} users.",
+            results.len() - num_errors,
+            results.len(),
+        );
+    } else {
+        title = "Refresh finished";
+        description = format!("Refreshed {:?} users.", results.len());
+    }
+    reply_handle
+        .edit(ctx, |b| {
+            b.embed(|b| {
+                b.title(title).description(description).footer(|b| {
+                    b.text(format!(
+                        "Latency: {}.{}ms",
+                        latency.as_millis(),
+                        latency.subsec_nanos() % 1_000_000
+                    ))
+                })
+            })
+        })
+        .await?;
     Ok(())
 }

@@ -31,7 +31,7 @@ pub struct TetrUser {
     pub country: Option<String>,
     pub league: TetraLeagueStanding,
     pub connections: TetrUserConnections,
-    pub friend_count: i32,
+    pub friend_count: Option<i32>,
 }
 
 #[derive(Deserialize)]
@@ -70,19 +70,23 @@ pub struct TetrUserRankRecord {
 #[allow(dead_code)]
 #[derive(Deserialize, Debug)]
 pub struct TetrUser40lRecord {
-    record: TetrRecord,
+    record: Option<TetrRecord>,
     rank: Option<i32>,
 }
 
 #[allow(dead_code)]
 #[derive(Deserialize, Debug)]
 pub struct TetrUserBlitzRecord {
-    record: TetrRecord,
+    record: Option<TetrRecord>,
     rank: Option<i32>,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize, Debug)]
-pub struct TetrUserZenRecord {}
+pub struct TetrUserZenRecord {
+    level: i32,
+    score: i32,
+}
 
 #[allow(dead_code)]
 #[derive(Deserialize, Debug)]
@@ -104,7 +108,7 @@ pub async fn get_user(ctx: &Context<'_>, user: &str) -> Result<TetrUser, Error> 
         .context("tetr.io API call failed")?
         .json::<TetrResponse<UserResponseData>>()
         .await
-        .context("failed to parse tetr.io data")?;
+        .with_context(|| format!("failed to parse tetr.io data for {}", user))?;
     if !response.success {
         Err(anyhow::anyhow!(
             "tetr.io API unsuccessful for `{}`:\n{}",
@@ -129,7 +133,7 @@ pub async fn get_user_record(ctx: &Context<'_>, user: &str) -> Result<TetrUserRe
         .context("tetr.io API call failed")?
         .json::<TetrResponse<TetrUserRecord>>()
         .await
-        .context("failed to parse tetr.io data")?;
+        .with_context(|| format!("failed to parse tetr.io data for {}", user))?;
     if !response.success {
         Err(anyhow::anyhow!(
             "tetr.io API unsuccessful for `{}`:\n{}",
