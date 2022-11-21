@@ -1,9 +1,9 @@
 use crate::{CommandResult, Context, Error};
 use db::Monitor;
-use futures::{stream, StreamExt};
 
 use anyhow::Context as anyhowContext;
 use country_emoji::code_to_flag;
+use futures::{stream, StreamExt};
 use poise::serenity_prelude::CreateEmbed;
 use pretty_duration::pretty_duration;
 use std::time::Duration;
@@ -31,6 +31,16 @@ fn format_tetr_user<'a>(user: &client::TetrUser, b: &'a mut CreateEmbed) -> &'a 
     .field("Online games", user.gamesplayed, true)
     .field("Games won", user.gameswon, true)
     .thumbnail(client::get_user_avatar_url(&user._id))
+}
+
+fn append_latency(b: &mut CreateEmbed, l: Duration) -> &mut CreateEmbed {
+    b.footer(|b| {
+        b.text(format!(
+            "Time taken: {}.{}ms",
+            l.as_millis(),
+            l.subsec_nanos() % 1_000_000
+        ))
+    })
 }
 
 /// Tetr.io tracking
@@ -126,12 +136,13 @@ pub async fn monitor2(
             },
         }
     }
-    dbg!(start.elapsed());
 
+    let latency = start.elapsed();
     reply_handle
         .edit(ctx, |b| {
             b.embed(|b| {
                 b.title(format!("Monitored {} new users", num_inserted));
+                append_latency(b, latency);
                 if !failed_users.is_empty() {
                     b.field("Failed users", failed_users.join("\n"), true);
                 }
@@ -293,13 +304,8 @@ pub async fn refresh(ctx: Context<'_>) -> CommandResult {
     reply_handle
         .edit(ctx, |b| {
             b.embed(|b| {
-                b.title(title).description(description).footer(|b| {
-                    b.text(format!(
-                        "Latency: {}.{}ms",
-                        latency.as_millis(),
-                        latency.subsec_nanos() % 1_000_000
-                    ))
-                })
+                b.title(title).description(description);
+                append_latency(b, latency)
             })
         })
         .await?;

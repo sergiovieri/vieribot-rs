@@ -96,11 +96,14 @@ pub struct TetrRecord {
 }
 
 static TETR_API_BASE_URL: &str = "https://ch.tetr.io/api/";
+static X_SESSION_ID_HEADER: &str = "X-Session-ID";
+static X_SESSION_ID_VALUE: &str = "aiweufhisdhf";
 
 pub async fn get_user(ctx: &Context<'_>, user: &str) -> Result<TetrUser, Error> {
     let reqwest = &ctx.data().reqwest;
     let response = reqwest
         .get(reqwest::Url::parse(TETR_API_BASE_URL)?.join(&format!("users/{}", user))?)
+        .header(X_SESSION_ID_HEADER, X_SESSION_ID_VALUE)
         .send()
         .await
         .context("error sending request to tetr.io")?
@@ -126,6 +129,7 @@ pub async fn get_user_record(ctx: &Context<'_>, user: &str) -> Result<TetrUserRe
     let reqwest = &ctx.data().reqwest;
     let response = reqwest
         .get(reqwest::Url::parse(TETR_API_BASE_URL)?.join(&format!("users/{}/records", user))?)
+        .header(X_SESSION_ID_HEADER, X_SESSION_ID_VALUE)
         .send()
         .await
         .context("error sending request to tetr.io")?
@@ -143,7 +147,7 @@ pub async fn get_user_record(ctx: &Context<'_>, user: &str) -> Result<TetrUserRe
     }
     response
         .data
-        .ok_or_else(|| anyhow::anyhow!("user field not found for {}", user))
+        .ok_or_else(|| anyhow::anyhow!("data field not found for {}", user))
 }
 
 pub fn get_user_avatar_url(user_id: &str) -> String {
